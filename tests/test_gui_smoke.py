@@ -43,6 +43,9 @@ class FakeWorker(QObject):
     def stop_engine(self) -> None:
         self.calls.append(("stop",))
 
+    def close_browser(self) -> None:
+        self.calls.append(("close",))
+
     def send_confirm(self, d) -> None:
         self.calls.append(("confirm", d))
 
@@ -231,3 +234,114 @@ def test_selftest_returns_zero(qapp, capsys) -> None:
     out = capsys.readouterr()
     assert out.out == "" and out.err == ""
     save_config(load_config())  # config module still usable afterwards
+
+
+class FakeProc:
+    def __init__(self) -> None:
+        self.alive = True
+
+    def poll(self):
+        return None if self.alive else 0
+
+
+def _login_win(qtbot, launcher):
+    w = MainWindow(FakeWorker, FakeStats, login_launcher=launcher)
+    qtbot.addWidget(w)
+    w._login_timer.setInterval(20)
+    w._login_grace_s = 0.0
+    return w
+
+
+def test_login_button_flow(qtbot) -> None:
+    proc = FakeProc()
+    launched: list[object] = []
+
+    def launcher(path):
+        launched.append(path)
+        return proc
+
+    win = _login_win(qtbot, launcher)
+    live, worker = win.live, win._worker
+    worker.browser_open_changed.emit(True)
+    qtbot.mouseClick(live.btn_login, qtbot_left())
+    assert ("close",) in worker.calls
+    assert not launched  # waits for the browser to close
+    assert not live.btn_start.isEnabled()
+    worker.browser_open_changed.emit(False)
+    assert len(launched) == 1
+    assert "Logga in på Tinder" in live.banner.text()
+    for b in (live.btn_start, live.btn_open, live.btn_login):
+        assert not b.isEnabled()
+    proc.alive = False
+    qtbot.waitUntil(lambda: live.btn_start.isEnabled(), timeout=3000)
+    assert live.btn_open.isEnabled() and live.btn_login.isEnabled()
+    assert "sparad" in live.banner.text()
+
+
+def test_login_without_open_browser_launches_immediately(qtbot) -> None:
+    launched: list[object] = []
+    win = _login_win(qtbot, lambda p: launched.append(p) or FakeProc())
+    qtbot.mouseClick(win.live.btn_login, qtbot_left())
+    assert len(launched) == 1
+
+
+def test_login_confirms_when_running(qtbot, monkeypatch) -> None:
+    launched: list[object] = []
+    win = _login_win(qtbot, lambda p: launched.append(p) or FakeProc())
+    win._start()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+    win._login()
+    assert not launched and ("close",) not in win._worker.calls
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    win._login()
+    assert not launched and ("close",) in win._worker.calls
+    win._on_event(Stopped())
+    win._worker.browser_open_changed.emit(False)
+    assert len(launched) == 1
+
+
+def test_login_edge_missing_shows_message(qtbot, monkeypatch) -> None:
+    shown: list[str] = []
+
+    def launcher(path):
+        raise FileNotFoundError("x")
+
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: shown.append(a[1]))
+    win = _login_win(qtbot, launcher)
+    qtbot.mouseClick(win.live.btn_login, qtbot_left())
+    assert shown and "Edge" in shown[0]
+    assert win.live.btn_start.isEnabled()
+
+
+def test_login_requires_msedge_channel(qtbot, monkeypatch) -> None:
+    cfg = load_config()
+    cfg.browser_channel = "chromium"
+    save_config(cfg)
+    shown: list[str] = []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: shown.append(a[2]))
+    launched: list[object] = []
+    win = _login_win(qtbot, lambda p: launched.append(p))
+    win._login()
+    assert shown and "msedge" in shown[0] and not launched
+
+
+def test_needs_login_banner_mentions_button(win) -> None:
+    win._worker.event.emit(NeedsUser("inloggning krävs"))
+    assert "Logga in (vanlig Edge)" in win.live.banner.text()
+
+
+def test_login_waits_for_profile_lock_after_launcher_exits(qtbot) -> None:
+    """Real msedge.exe exits at once; the window stays busy while the profile is locked."""
+    busy = {"v": True}
+
+    class ExitedProc:
+        def poll(self):
+            return 0
+
+    win = _login_win(qtbot, lambda p: ExitedProc())
+    win._profile_busy = lambda p: busy["v"] and win._login_proc is not None
+    win._login()
+    qtbot.wait(100)
+    assert not win.live.btn_start.isEnabled()  # Edge still holds the profile
+    busy["v"] = False
+    qtbot.waitUntil(lambda: win.live.btn_start.isEnabled(), timeout=2000)

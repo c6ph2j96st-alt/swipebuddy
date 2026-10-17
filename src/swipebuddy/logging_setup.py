@@ -14,7 +14,7 @@ from .paths import logs_dir
 ALLOWED_EVENTS: frozenset[str] = frozenset(
     {
         "app_start", "app_stop", "engine_start", "engine_stop", "swipe", "pause",
-        "cap_reached", "needs_user", "error", "setup_check", "model_download",
+        "cap_reached", "needs_user", "error", "setup_check", "model_download", "login_browser",
     }
 )
 EVENT_LOGGER_NAME = "swipebuddy.events"

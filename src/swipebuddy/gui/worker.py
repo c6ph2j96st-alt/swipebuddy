@@ -62,6 +62,11 @@ class _Run:
 
 
 @dataclass(frozen=True)
+class _Close:
+    pass
+
+
+@dataclass(frozen=True)
 class _Shutdown:
     pass
 
@@ -108,6 +113,11 @@ class SessionWorker(QObject):
 
     def stop_engine(self) -> None:
         self._stop.set()
+
+    def close_browser(self) -> None:
+        """Stop a running engine, then close the browser (a later Open/Run reopens it)."""
+        self._stop.set()
+        self._cmds.put(_Close())
 
     def send_confirm(self, decision: Decision) -> None:
         self._engine_cmds.put(Confirm(decision))
@@ -157,6 +167,12 @@ class SessionWorker(QObject):
                         self._emit(Stopped())
                 elif isinstance(cmd, _Run):
                     self._run(cmd)
+                elif isinstance(cmd, _Close):
+                    # Runs after any engine run has returned (same thread).
+                    was_open = self._browser is not None
+                    self._close_browser()
+                    if not was_open:
+                        self.browser_open_changed.emit(False)
         finally:
             self._close_browser()
             QThread.currentThread().quit()

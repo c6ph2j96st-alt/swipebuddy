@@ -75,13 +75,14 @@ Everything lives in `%LOCALAPPDATA%\SwipeBuddy`:
 
 ## Usage
 
-1. Press **Start**. An Edge window opens on tinder.com. **Log in yourself** - the app never handles passwords. Your session is kept in the profile.
-2. Set your preferences in the Preferences tab and save.
-3. **Suggest mode:** for each profile the decision, score and reason are shown; press Like, Pass or Skip.
+1. Press **Logga in (vanlig Edge)**. SwipeBuddy closes its automated browser and opens an ordinary Edge window on tinder.com using its own profile. **Log in yourself** (Google, Facebook or phone number work) - the app never handles passwords. Close the Edge window completely when done; the session is kept in the profile. (Requires `browser_channel` = `msedge`.)
+2. Press **Start**. The automated Edge window opens with your saved login.
+3. Set your preferences in the Preferences tab and save.
+4. **Suggest mode:** for each profile the decision, score and reason are shown; press Like, Pass or Skip.
    **Auto mode:** decisions are executed after a randomised delay. It needs a confirmation when enabled.
-4. **Threshold** (0-100): a like requires a valid "like" verdict with a score at or above it.
-5. **Daily cap** stops the engine for the day (it survives restarts). **Delays and pauses** are randomised within the configured ranges.
-6. Press **Stop** at any time; it also interrupts a running delay.
+5. **Threshold** (0-100): a like requires a valid "like" verdict with a score at or above it.
+6. **Daily cap** stops the engine for the day (it survives restarts). **Delays and pauses** are randomised within the configured ranges.
+7. Press **Stop** at any time; it also interrupts a running delay.
 
 ## Configuration (`config.json`)
 
@@ -110,7 +111,9 @@ Invalid values are clamped or reset to defaults on load.
 - **Ollama not running:** start Ollama (system tray) and re-run the setup check; verify that `http://127.0.0.1:11434` responds.
 - **Very slow:** the GPU is not used. Check `nvidia-smi`, update the NVIDIA driver, or switch to `qwen2.5vl:3b`.
 - **CAPTCHA or verification:** the app stops. Solve it yourself in the browser and press Start again.
-- **Logged out:** log in again in the browser window.
+- **Logged out:** press **Logga in (vanlig Edge)** and log in there, close the Edge window, then press Start.
+- **Login just keeps loading** (Google/Facebook/phone) in the automated Edge window: those sites block automation-controlled browsers. Use **Logga in (vanlig Edge)** instead - it logs in in a normal, non-automated Edge that shares SwipeBuddy's profile.
+- **"Profilen används fortfarande":** close every Edge window opened by SwipeBuddy and try again.
 
 ## Development
 
@@ -143,5 +146,5 @@ SwipeBuddy är ett lokalt Windows-program som läser profilbilder på tinder.com
 - **Varning:** Att automatisera Tinder strider mot Tinders användarvillkor och kontot kan bli avstängt. Använd på egen risk. Inte kopplat till Tinder/Match Group.
 - **Integritet:** Bilder hanteras bara lokalt i minnet och sparas eller delas aldrig. Ingen telemetri. Bara antal sparas (inga bilder, namn eller motiveringar). Respektera andras integritet.
 - **Installera:** ladda ner zip från Releases, packa upp, kör `SwipeBuddy.exe`, följ första-start-dialogen och installera Ollama från ollama.com.
-- **Använd:** logga in själv i webbläsarfönstret (appen hanterar aldrig lösenord). Förslag-läge är standard. Vid CAPTCHA stannar appen och du tar över.
+- **Använd:** tryck "Logga in (vanlig Edge)" och logga in själv i det vanliga Edge-fönstret, stäng det och tryck Start (appen hanterar aldrig lösenord). Förslag-läge är standard. Vid CAPTCHA stannar appen och du tar över.
 - **Krav:** Windows 10/11, helst NVIDIA-GPU med minst 8 GB VRAM, cirka 8-9 GB disk, Microsoft Edge.

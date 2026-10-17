@@ -129,3 +129,27 @@ def test_browser_start_failure(qtbot) -> None:
     assert isinstance(events[0], Error)
     assert w.shutdown(5000)
     assert QThread.currentThread() is not None
+
+
+def test_close_browser_stops_engine_and_reopens(qtbot) -> None:
+    log: list[Any] = []
+    w, browser = _make(log)
+    events: list[Any] = []
+    opened: list[bool] = []
+    w.event.connect(events.append)
+    w.browser_open_changed.connect(opened.append)
+    w.start()
+    cfg = AppConfig()
+    w.run_engine(cfg)
+    qtbot.waitUntil(lambda: any(getattr(e, "text", "") == "running" for e in events), timeout=5000)
+    w.close_browser()
+    qtbot.waitUntil(lambda: opened[-1:] == [False], timeout=5000)
+    assert any(isinstance(e, Stopped) for e in events)
+    assert log.count("close") == 1
+    w.open_browser(cfg)  # reopen after close
+    qtbot.waitUntil(lambda: opened[-1:] == [True], timeout=5000)
+    assert log.count("start") == 2
+    w.close_browser()
+    w.close_browser()  # never-open case still reports closed
+    qtbot.waitUntil(lambda: opened.count(False) >= 3, timeout=5000)
+    assert w.shutdown(5000)

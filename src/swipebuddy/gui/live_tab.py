@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..engine import (
+    R_LOGIN,
     AwaitingConfirm,
     CapReached,
     Error,
@@ -26,6 +27,13 @@ from ..engine import (
 
 BANNER_WARN = "background:#fff3a3;color:#5c4a00;padding:8px;border:1px solid #d4b900;font-weight:bold;"
 BANNER_ERR = "background:#ffd6d6;color:#7a0000;padding:8px;border:1px solid #c00000;font-weight:bold;"
+BANNER_INFO = "background:#d6e9ff;color:#0b3a6b;padding:8px;border:1px solid #2a6db5;font-weight:bold;"
+TXT_LOGIN_HELP = (
+    "Logga in på Tinder i Edge-fönstret som öppnades (Google, Facebook eller telefon fungerar). "
+    "Stäng sedan Edge-fönstret helt och tryck Start."
+)
+TXT_LOGIN_DONE = "Inloggningen är sparad – tryck Start."
+TXT_NEEDS_LOGIN = "Din hjälp behövs: inloggning krävs. Tryck 'Logga in (vanlig Edge)' och logga in där."
 COLOR_LIKE = "color:#1b8a3a;"
 COLOR_PASS = "color:#c0392b;"
 
@@ -34,6 +42,7 @@ class LiveTab(QWidget):
     """Shows engine state; emits user intents as signals."""
 
     open_browser = Signal()
+    login = Signal()
     start = Signal()
     stop = Signal()
     confirm = Signal(str)
@@ -43,6 +52,7 @@ class LiveTab(QWidget):
         super().__init__(parent)
         self._threshold = 70
         self.btn_open = QPushButton("Öppna webbläsare")
+        self.btn_login = QPushButton("Logga in (vanlig Edge)")
         self.btn_start = QPushButton("Start")
         self.btn_stop = QPushButton("Stopp")
         self.btn_stop.setEnabled(False)
@@ -69,7 +79,7 @@ class LiveTab(QWidget):
         self._suggest_buttons = (self.btn_like, self.btn_pass, self.btn_skip)
 
         top = QHBoxLayout()
-        for b in (self.btn_open, self.btn_start, self.btn_stop):
+        for b in (self.btn_open, self.btn_login, self.btn_start, self.btn_stop):
             top.addWidget(b)
         top.addStretch(1)
         top.addWidget(self.mode_label)
@@ -83,11 +93,14 @@ class LiveTab(QWidget):
         lay.addStretch(1)
 
         self.btn_open.clicked.connect(self.open_browser)
+        self.btn_login.clicked.connect(self.login)
         self.btn_start.clicked.connect(self.start)
         self.btn_stop.clicked.connect(self.stop)
         self.btn_like.clicked.connect(lambda: self.confirm.emit("like"))
         self.btn_pass.clicked.connect(lambda: self.confirm.emit("pass"))
         self.btn_skip.clicked.connect(self.skip)
+        self._login_active = False
+        self._running = False
         self.set_mode("suggest", 70)
         self.set_running(False)
 
@@ -104,11 +117,26 @@ class LiveTab(QWidget):
 
     def set_running(self, running: bool) -> None:
         """Enable/disable controls depending on whether an engine run is active."""
-        self.btn_start.setEnabled(not running)
-        self.btn_open.setEnabled(not running)
-        self.btn_stop.setEnabled(running)
+        self._running = running
+        self._apply_enabled()
         if not running:
             self._set_suggest_enabled(False)
+
+    def _apply_enabled(self) -> None:
+        idle = not self._running and not self._login_active
+        self.btn_start.setEnabled(idle)
+        self.btn_open.setEnabled(idle)
+        self.btn_login.setEnabled(idle)
+        self.btn_stop.setEnabled(self._running)
+
+    def set_login_active(self, active: bool) -> None:
+        """Lock Start/Öppna/Logga in while the plain Edge login is in progress."""
+        self._login_active = active
+        self._apply_enabled()
+
+    def show_info(self, text: str) -> None:
+        """Show an informational (blue) banner."""
+        self._banner(text, BANNER_INFO)
 
     def update_counts(self, like: int, pass_: int, cap: int | None = None) -> None:
         tail = f"   Tak: {cap}" if cap is not None else ""
@@ -163,7 +191,8 @@ class LiveTab(QWidget):
             self._banner(f"Dagstaket är nått ({ev.total} av {ev.cap}). Stoppar.", BANNER_WARN)
             self.status_label.setText("Dagstak nått")
         elif isinstance(ev, NeedsUser):
-            self._banner(f"Din hjälp behövs: {ev.reason}", BANNER_WARN)
+            text = TXT_NEEDS_LOGIN if ev.reason == R_LOGIN else f"Din hjälp behövs: {ev.reason}"
+            self._banner(text, BANNER_WARN)
         elif isinstance(ev, Error):
             self._banner(ev.message, BANNER_ERR)
         elif isinstance(ev, Stopped):

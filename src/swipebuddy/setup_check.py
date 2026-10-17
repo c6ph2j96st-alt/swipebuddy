@@ -15,6 +15,7 @@ import httpx
 
 from .config import AppConfig
 from .detection import MODEL_URL, default_model_path, verify_model_file
+from .login_browser import find_edge
 
 OLLAMA_DOWNLOAD_URL = "https://ollama.com/download/windows"
 MIN_VRAM_MB = 8000
@@ -130,11 +131,7 @@ def download_detector(
 
 def edge_available() -> bool:
     """True if msedge.exe exists in a standard install location."""
-    for var in ("PROGRAMFILES", "PROGRAMFILES(X86)"):
-        base = os.environ.get(var)
-        if base and (Path(base) / "Microsoft" / "Edge" / "Application" / "msedge.exe").is_file():
-            return True
-    return False
+    return find_edge() is not None
 
 
 def install_chromium(on_line: Callable[[str], None]) -> int:

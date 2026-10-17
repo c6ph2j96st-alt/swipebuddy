@@ -1,23 +1,32 @@
 """Main window: tabs, worker wiring and status bar."""
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from typing import Any
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction, QCloseEvent
-from PySide6.QtWidgets import QMainWindow, QTabWidget
+from PySide6.QtWidgets import QMainWindow, QMessageBox, QTabWidget
 
 from ..config import load_config
 from ..engine import Stopped, Swiped
 from ..logging_setup import log_event
+from ..login_browser import launch_plain_edge, profile_in_use
+from ..paths import profile_dir
 from ..stats import StatsStore
-from .live_tab import LiveTab
+from .live_tab import TXT_LOGIN_DONE, TXT_LOGIN_HELP, LiveTab
 from .prefs_tab import PrefsTab
 from .settings_tab import SettingsTab
 from .setup_dialog import SetupDialog
 from .worker import SessionWorker
 
 SHUTDOWN_TIMEOUT_MS = 10000
+CLOSE_WAIT_MS = 15000
+LOGIN_POLL_MS = 1000
+# msedge.exe hands off to a broker process and exits at once, so liveness is
+# judged from the profile lock; give Edge this long to take the lock.
+LOGIN_GRACE_S = 10.0
 
 
 class MainWindow(QMainWindow):
@@ -27,6 +36,7 @@ class MainWindow(QMainWindow):
         self,
         worker_factory: Callable[[], Any] = SessionWorker,
         stats_factory: Callable[[], Any] = StatsStore,
+        login_launcher: Callable[..., Any] = launch_plain_edge,
     ) -> None:
         super().__init__()
         self.setWindowTitle("SwipeBuddy")
@@ -34,6 +44,20 @@ class MainWindow(QMainWindow):
         self._worker = worker_factory()
         self._worker_started = False
         self._stats_factory = stats_factory
+        self._login_launcher = login_launcher
+        self._login_proc: Any = None
+        self._login_started = 0.0
+        self._login_grace_s = LOGIN_GRACE_S
+        self._profile_busy: Callable[[Any], bool] = profile_in_use
+        self._browser_open = False
+        self._engine_running = False
+        self._waiting_close = False
+        self._close_timer = QTimer(self)
+        self._close_timer.setSingleShot(True)
+        self._close_timer.timeout.connect(self._on_close_timeout)
+        self._login_timer = QTimer(self)
+        self._login_timer.setInterval(LOGIN_POLL_MS)
+        self._login_timer.timeout.connect(self._poll_login)
 
         self.live = LiveTab()
         self.prefs = PrefsTab()
@@ -49,11 +73,13 @@ class MainWindow(QMainWindow):
         self.menuBar().addMenu("Verktyg").addAction(action)
 
         self.live.open_browser.connect(self._open_browser)
+        self.live.login.connect(self._login)
         self.live.start.connect(self._start)
         self.live.stop.connect(self._worker.stop_engine)
         self.live.confirm.connect(self._worker.send_confirm)
         self.live.skip.connect(self._worker.send_skip)
         self._worker.event.connect(self._on_event)
+        self._worker.browser_open_changed.connect(self._on_browser_open_changed)
         self.settings.saved.connect(self._refresh_mode)
         self._refresh_mode()
         self._refresh_counts()
@@ -90,6 +116,7 @@ class MainWindow(QMainWindow):
         cfg = load_config()  # fresh snapshot: settings apply from this Start
         self.live.set_mode(cfg.mode, cfg.threshold)
         self.live.set_running(True)
+        self._engine_running = True
         self._refresh_counts()
         self._worker.run_engine(cfg)
 
@@ -98,13 +125,94 @@ class MainWindow(QMainWindow):
         if isinstance(ev, Swiped):
             self._set_counts(ev.today_like, ev.today_pass, ev.cap)
         elif isinstance(ev, Stopped):
+            self._engine_running = False
             self._refresh_counts()
+
+    # -- plain-Edge login ------------------------------------------------
+    def _on_browser_open_changed(self, is_open: bool) -> None:
+        self._browser_open = is_open
+        if not is_open and self._waiting_close:
+            self._finish_login_launch()
+
+    def _on_close_timeout(self) -> None:
+        if self._waiting_close:
+            self._finish_login_launch()
+
+    def _login(self) -> None:
+        """Close the automated browser, then open an ordinary Edge for manual login."""
+        if load_config().browser_channel != "msedge":
+            QMessageBox.information(
+                self,
+                "Logga in",
+                "Inloggning via vanlig Edge kräver att browser_channel är 'msedge' i inställningarna "
+                "– annars används inte den sparade inloggningen.",
+            )
+            return
+        if self._engine_running:
+            ans = QMessageBox.question(
+                self, "Logga in", "Körningen pågår. Stoppa den och fortsätt till inloggning?"
+            )
+            if ans != QMessageBox.StandardButton.Yes:
+                return
+        self.live.set_login_active(True)
+        if self._browser_open or self._engine_running:
+            self._waiting_close = True
+            self._ensure_worker()
+            self._worker.close_browser()
+            self._close_timer.start(CLOSE_WAIT_MS)
+        else:
+            self._finish_login_launch()
+
+    def _finish_login_launch(self) -> None:
+        self._waiting_close = False
+        self._close_timer.stop()
+        try:
+            if self._profile_busy(profile_dir()):
+                QMessageBox.warning(
+                    self,
+                    "Logga in",
+                    "Webbläsarprofilen används fortfarande. Stäng alla Edge-fönster som "
+                    "SwipeBuddy öppnat och försök igen.",
+                )
+                self.live.set_login_active(False)
+                return
+            self._login_proc = self._login_launcher(profile_dir())
+        except FileNotFoundError:
+            QMessageBox.warning(
+                self,
+                "Microsoft Edge saknas",
+                "Inloggningen kräver Microsoft Edge, som inte hittades. Installera Edge och försök igen.",
+            )
+            self.live.set_login_active(False)
+            return
+        except Exception as exc:  # noqa: BLE001 - class name only
+            log_event("error", error_type=type(exc).__name__)
+            QMessageBox.warning(self, "Logga in", "Kunde inte öppna Edge.")
+            self.live.set_login_active(False)
+            return
+        log_event("login_browser")
+        self.live.show_info(TXT_LOGIN_HELP)
+        self._login_started = time.monotonic()
+        self._login_timer.start()
+
+    def _poll_login(self) -> None:
+        proc = self._login_proc
+        in_grace = time.monotonic() - self._login_started < self._login_grace_s
+        proc_alive = proc is not None and proc.poll() is None
+        if in_grace or proc_alive or self._profile_busy(profile_dir()):
+            return
+        self._login_timer.stop()
+        self._login_proc = None
+        self.live.set_login_active(False)
+        self.live.show_info(TXT_LOGIN_DONE)
 
     def show_setup(self) -> None:
         """Open the installation check dialog."""
         SetupDialog(load_config(), parent=self).exec()
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 (Qt API)
+        self._login_timer.stop()
+        self._close_timer.stop()
         self._worker.stop_engine()
         self._worker.shutdown(SHUTDOWN_TIMEOUT_MS)
         log_event("app_stop")
