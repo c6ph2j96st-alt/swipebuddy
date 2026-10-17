@@ -1,0 +1,27 @@
+# User data (normally in %LOCALAPPDATA%\SwipeBuddy, ignored here too for dev runs)
+config.json
+stats.json
+browser-profile/
+models/
+logs/
+*.log
+.env
+.env.*
+
+# Model weights
+*.onnx
+*.pt
+*.gguf
+*.safetensors
+
+# Build output
+dist/
+build/
+*.egg-info/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.personal-words
