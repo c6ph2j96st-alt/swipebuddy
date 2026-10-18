@@ -16,11 +16,11 @@ Target machine: Windows 11, RTX 3060 12 GB. Unit tests cannot cover GPU, Ollama 
 - [ ] 2.1 Press Start. *Expected: an Edge window opens on tinder.com.*
 - [ ] 2.2 Log in manually. *Expected: the app never asks for credentials; the state becomes ready once profiles show.*
 - [ ] 2.3 Close the app and start it again. *Expected: still logged in.*
-- [ ] 2.5 Press "Logga in (vanlig Edge)" while the automated browser is open (and once while running). *Expected: a confirmation appears if running; the automated browser closes; a normal Edge window opens on tinder.com; Start/Öppna webbläsare/the button are disabled and a blue banner explains what to do.*
+- [ ] 2.5 Press "Logga in (vanlig Edge)" while the automated browser is open (and once while running). *Expected: a confirmation appears if running; the automated browser closes; a normal Edge window opens on tinder.com; only the login button is disabled and a blue banner explains what to do.*
 - [ ] 2.6 In that normal Edge, log in with Google, Facebook or phone number. *Expected: login completes (no endless loading); the app asks for nothing.*
-- [ ] 2.7 Close the Edge window completely. *Expected: within about 1 s the buttons are re-enabled and the banner says "Inloggningen är sparad – tryck Start."*
-- [ ] 2.8 Press Start. *Expected: the automated Edge opens already logged in, the state becomes READY and a profile is evaluated.*
-- [ ] 2.9 Close and restart the app, press Start. *Expected: login survived.*
+- [ ] 2.7 Do NOT close the Edge window. Press Start directly. *Expected: the status says "Stänger inloggningsfönstret och sparar inloggningen…", the login Edge window closes by itself within about 20 s and the engine starts.*
+- [ ] 2.8 *Expected: the automated Edge opens already logged in, the state becomes READY and a profile is evaluated. (Alternatively close the Edge window yourself and wait: once the profile is released the banner says "Inloggningen är sparad – tryck Start.")*
+- [ ] 2.9 Close and restart the app, press Start. *Expected: login survived (kept after restart).*
 - [ ] 2.10 Rename msedge.exe temporarily (or test on a machine without Edge). *Expected: a message that Microsoft Edge is required; no crash.*
 - [ ] 2.4 (Optional) Set `browser_channel` to `chromium`. *Expected: Playwright's Chromium is downloaded with progress if needed.*
 

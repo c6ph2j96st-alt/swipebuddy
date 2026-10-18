@@ -29,10 +29,11 @@ BANNER_WARN = "background:#fff3a3;color:#5c4a00;padding:8px;border:1px solid #d4
 BANNER_ERR = "background:#ffd6d6;color:#7a0000;padding:8px;border:1px solid #c00000;font-weight:bold;"
 BANNER_INFO = "background:#d6e9ff;color:#0b3a6b;padding:8px;border:1px solid #2a6db5;font-weight:bold;"
 TXT_LOGIN_HELP = (
-    "Logga in på Tinder i Edge-fönstret som öppnades (Google, Facebook eller telefon fungerar). "
-    "Stäng sedan Edge-fönstret helt och tryck Start."
+    "Logga in på Tinder i Edge-fönstret som öppnades. "
+    "När du är inloggad: tryck Start – inloggningsfönstret stängs automatiskt."
 )
 TXT_LOGIN_DONE = "Inloggningen är sparad – tryck Start."
+TXT_LOGIN_CLOSING = "Stänger inloggningsfönstret och sparar inloggningen…"
 TXT_NEEDS_LOGIN = "Din hjälp behövs: inloggning krävs. Tryck 'Logga in (vanlig Edge)' och logga in där."
 COLOR_LIKE = "color:#1b8a3a;"
 COLOR_PASS = "color:#c0392b;"
@@ -100,6 +101,7 @@ class LiveTab(QWidget):
         self.btn_pass.clicked.connect(lambda: self.confirm.emit("pass"))
         self.btn_skip.clicked.connect(self.skip)
         self._login_active = False
+        self._closing = False
         self._running = False
         self.set_mode("suggest", 70)
         self.set_running(False)
@@ -123,15 +125,20 @@ class LiveTab(QWidget):
             self._set_suggest_enabled(False)
 
     def _apply_enabled(self) -> None:
-        idle = not self._running and not self._login_active
-        self.btn_start.setEnabled(idle)
-        self.btn_open.setEnabled(idle)
-        self.btn_login.setEnabled(idle)
+        free = not self._running and not self._closing
+        self.btn_start.setEnabled(free)
+        self.btn_open.setEnabled(free)
+        self.btn_login.setEnabled(free and not self._login_active)
         self.btn_stop.setEnabled(self._running)
 
     def set_login_active(self, active: bool) -> None:
-        """Lock Start/Öppna/Logga in while the plain Edge login is in progress."""
+        """Disable only the login button while the plain Edge login is in progress."""
         self._login_active = active
+        self._apply_enabled()
+
+    def set_closing(self, closing: bool) -> None:
+        """Lock Start/Öppna/Logga in while the login window is being closed."""
+        self._closing = closing
         self._apply_enabled()
 
     def show_info(self, text: str) -> None:

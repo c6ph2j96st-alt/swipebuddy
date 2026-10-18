@@ -15,3 +15,18 @@ def _swipebuddy_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home = tmp_path / "sb_home"
     monkeypatch.setenv("SWIPEBUDDY_HOME", str(home))
     return home
+
+
+@pytest.fixture(autouse=True)
+def _no_real_edge_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never spawn powershell/taskkill from tests; tests of it pass fake ``run``."""
+    from swipebuddy import login_browser
+
+    real = login_browser.find_profile_edge_pids
+
+    def guarded(profile_dir, run=None):
+        if run is None:
+            return []
+        return real(profile_dir, run=run)
+
+    monkeypatch.setattr(login_browser, "find_profile_edge_pids", guarded)

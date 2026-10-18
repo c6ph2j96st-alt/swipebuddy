@@ -5,17 +5,17 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import QMainWindow, QMessageBox, QTabWidget
 
 from ..config import load_config
 from ..engine import Stopped, Swiped
 from ..logging_setup import log_event
-from ..login_browser import launch_plain_edge, profile_in_use
+from ..login_browser import close_profile_edge, launch_plain_edge, profile_in_use
 from ..paths import profile_dir
 from ..stats import StatsStore
-from .live_tab import TXT_LOGIN_DONE, TXT_LOGIN_HELP, LiveTab
+from .live_tab import TXT_LOGIN_CLOSING, TXT_LOGIN_DONE, TXT_LOGIN_HELP, LiveTab
 from .prefs_tab import PrefsTab
 from .settings_tab import SettingsTab
 from .setup_dialog import SetupDialog
@@ -29,6 +29,29 @@ LOGIN_POLL_MS = 1000
 LOGIN_GRACE_S = 10.0
 
 
+class _CloseSignals(QObject):
+    done = Signal(bool)
+
+
+class _CloseJob(QRunnable):
+    """Runs the blocking Edge close in a pool thread and reports success."""
+
+    def __init__(self, fn: Callable[[], bool]) -> None:
+        super().__init__()
+        self.signals = _CloseSignals()
+        self._fn = fn
+
+    def run(self) -> None:
+        try:
+            ok = bool(self._fn())
+        except Exception:  # noqa: BLE001
+            ok = False
+        try:
+            self.signals.done.emit(ok)
+        except RuntimeError:
+            pass  # the window was closed meanwhile
+
+
 class MainWindow(QMainWindow):
     """Hosts the Live, Preferenser and Inställningar tabs."""
 
@@ -37,6 +60,7 @@ class MainWindow(QMainWindow):
         worker_factory: Callable[[], Any] = SessionWorker,
         stats_factory: Callable[[], Any] = StatsStore,
         login_launcher: Callable[..., Any] = launch_plain_edge,
+        edge_closer: Callable[..., bool] = close_profile_edge,
     ) -> None:
         super().__init__()
         self.setWindowTitle("SwipeBuddy")
@@ -45,8 +69,11 @@ class MainWindow(QMainWindow):
         self._worker_started = False
         self._stats_factory = stats_factory
         self._login_launcher = login_launcher
-        self._login_proc: Any = None
+        self._edge_closer = edge_closer
+        self._pool = QThreadPool()
+        self._close_job: _CloseJob | None = None
         self._login_started = 0.0
+        self._login_active = False
         self._login_grace_s = LOGIN_GRACE_S
         self._profile_busy: Callable[[Any], bool] = profile_in_use
         self._browser_open = False
@@ -108,10 +135,57 @@ class MainWindow(QMainWindow):
 
     # -- actions -------------------------------------------------------
     def _open_browser(self) -> None:
+        if self._close_login_first(self._do_open_browser):
+            return
+        self._do_open_browser()
+
+    def _do_open_browser(self) -> None:
         self._ensure_worker()
         self._worker.open_browser(load_config())
 
     def _start(self) -> None:
+        if self._close_login_first(self._do_start):
+            return
+        self._do_start()
+
+    def _close_login_first(self, proceed: Callable[[], None]) -> bool:
+        """If the login Edge may still hold the profile, close it in the background.
+
+        Returns True when a close is running (``proceed`` runs after success).
+        """
+        if self._close_job is not None:
+            return True
+        if not (self._login_active or self._profile_busy(profile_dir())):
+            return False
+        self._login_timer.stop()
+        self.live.set_closing(True)
+        self.live.show_info(TXT_LOGIN_CLOSING)
+        self.live.status_label.setText(TXT_LOGIN_CLOSING)
+        job = _CloseJob(lambda: self._edge_closer(profile_dir()))
+        job.signals.done.connect(lambda ok: self._on_login_closed(ok, proceed))
+        self._close_job = job
+        self._pool.start(job)
+        return True
+
+    def _on_login_closed(self, ok: bool, proceed: Callable[[], None]) -> None:
+        self._close_job = None
+        self.live.set_closing(False)
+        if not ok:
+            if self._login_active:
+                self._login_timer.start()
+            QMessageBox.warning(
+                self,
+                "Logga in",
+                "Edge-fönstret för inloggningen är fortfarande öppet. Stäng det och försök igen.",
+            )
+            return
+        self._login_active = False
+        self.live.set_login_active(False)
+        self.live.banner.hide()
+        self.live.status_label.setText("Redo")
+        proceed()
+
+    def _do_start(self) -> None:
         self._ensure_worker()
         cfg = load_config()  # fresh snapshot: settings apply from this Start
         self.live.set_mode(cfg.mode, cfg.threshold)
@@ -154,6 +228,7 @@ class MainWindow(QMainWindow):
             )
             if ans != QMessageBox.StandardButton.Yes:
                 return
+        self._login_active = True
         self.live.set_login_active(True)
         if self._browser_open or self._engine_running:
             self._waiting_close = True
@@ -166,28 +241,32 @@ class MainWindow(QMainWindow):
     def _finish_login_launch(self) -> None:
         self._waiting_close = False
         self._close_timer.stop()
+        # Edge from an earlier login may linger and hold the profile: close it first.
+        if self._profile_busy(profile_dir()) and self._close_login_first(self._relaunch_login):
+            return
+        self._launch_login_now()
+
+    def _relaunch_login(self) -> None:
+        self._login_active = True
+        self.live.set_login_active(True)
+        self._launch_login_now()
+
+    def _launch_login_now(self) -> None:
         try:
-            if self._profile_busy(profile_dir()):
-                QMessageBox.warning(
-                    self,
-                    "Logga in",
-                    "Webbläsarprofilen används fortfarande. Stäng alla Edge-fönster som "
-                    "SwipeBuddy öppnat och försök igen.",
-                )
-                self.live.set_login_active(False)
-                return
-            self._login_proc = self._login_launcher(profile_dir())
+            self._login_launcher(profile_dir())
         except FileNotFoundError:
             QMessageBox.warning(
                 self,
                 "Microsoft Edge saknas",
                 "Inloggningen kräver Microsoft Edge, som inte hittades. Installera Edge och försök igen.",
             )
+            self._login_active = False
             self.live.set_login_active(False)
             return
         except Exception as exc:  # noqa: BLE001 - class name only
             log_event("error", error_type=type(exc).__name__)
             QMessageBox.warning(self, "Logga in", "Kunde inte öppna Edge.")
+            self._login_active = False
             self.live.set_login_active(False)
             return
         log_event("login_browser")
@@ -196,13 +275,11 @@ class MainWindow(QMainWindow):
         self._login_timer.start()
 
     def _poll_login(self) -> None:
-        proc = self._login_proc
         in_grace = time.monotonic() - self._login_started < self._login_grace_s
-        proc_alive = proc is not None and proc.poll() is None
-        if in_grace or proc_alive or self._profile_busy(profile_dir()):
+        if in_grace or self._profile_busy(profile_dir()):
             return
         self._login_timer.stop()
-        self._login_proc = None
+        self._login_active = False
         self.live.set_login_active(False)
         self.live.show_info(TXT_LOGIN_DONE)
 
@@ -213,6 +290,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 (Qt API)
         self._login_timer.stop()
         self._close_timer.stop()
+        self._pool.waitForDone(2000)
         self._worker.stop_engine()
         self._worker.shutdown(SHUTDOWN_TIMEOUT_MS)
         log_event("app_stop")
