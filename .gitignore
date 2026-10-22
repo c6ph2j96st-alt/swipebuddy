@@ -25,3 +25,27 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .personal-words
+
+# Images/screenshots (the app keeps profile images in RAM only; these guard
+# against debug dumps). assets/ is the only place images may be committed.
+screenshots/
+captures/
+debug_images/
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.bmp
+!assets/*.png
+!assets/*.ico
+
+# Packaged builds and archives
+*.exe
+*.zip
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
